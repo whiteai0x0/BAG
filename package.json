@@ -1,0 +1,16 @@
+{
+  "name": "bag-kakeru",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "test": "node --test test.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
+    "fflate": "0.8.2"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
