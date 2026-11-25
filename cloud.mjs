@@ -1,3 +1,4 @@
+import {beginVerification,verify,manage,role,validEmail} from './accounts.mjs';
 import {downloadExtension} from './extension-download.mjs';
 import http from 'node:http';
 import {httpServerHandler} from 'cloudflare:node';
@@ -51,28 +52,36 @@ const server=http.createServer(async(req,res)=>{
  const url=new URL(req.url,'http://localhost'),path=url.pathname,m=req.method;
  const origin=req.headers.origin;
  if(m!=='GET' && origin && !origin.startsWith('chrome-extension://') && origin!==(secure?'https://':'http://')+req.headers.host) fail(403,'Origin mismatch.');
- if(m==='POST'&&['/api/register','/api/login'].includes(path)){
+ if(m==='POST'&&['/api/register','/api/login','/api/verify'].includes(path)){
  await limit('auth:'+req.headers['cf-connecting-ip'],30);const b=await body(req),email=String(b.email||'').trim().toLowerCase(),password=b.password;
- if(!/^\S+@\S+\.\S+$/.test(email)||email.length>254||typeof password!=='string'||password.length>256)fail(400,'Enter a valid email and password.');
- let user=await query('SELECT * FROM users WHERE email=?').get(email);
+ let user;
+ if(path==='/api/verify'){user=await verify(sql,env,b)}else{
+ if(!validEmail(email)||email.length>254||typeof password!=='string'||password.length>256)fail(400,'Enter a valid email and password.');
+ user=await query('SELECT * FROM users WHERE email=?').get(email);
  if(path.endsWith('register')){
  if(password.length<12)fail(400,'Use at least 12 characters for your password.');
- const id=randomUUID();
- if(!(await query('INSERT INTO users VALUES(?,?,crypt(?,gen_salt(\'bf\',10))) ON CONFLICT DO NOTHING').run(id,email,digest(password))).changes)fail(409,'Email already registered.');
- user={id};
+ if(user)fail(409,'Account already exists. Sign in to continue.');
+ return json(202,await beginVerification(sql,env,email,digest(password)));
  }else{
  const match=await sql.query("SELECT crypt($1,COALESCE($2,gen_salt('bf',10)))=$2 AS ok",[digest(password),user?.hash??null]);
  if(!match[0].ok)fail(401,'Email or password is incorrect.');
  }
+ if(user.suspended)fail(403,'This account is suspended.');
+ if(!user.verified){
+   if(b.client==='extension')fail(403,'Verify your email by signing in on the BAG website first.');
+   return json(202,await beginVerification(sql,env,email,digest(password)));
+ }
+ }
  await sql.query('DELETE FROM sessions WHERE expires < $1',[Date.now()]);
- const token=randomBytes(32).toString('hex');await query('INSERT INTO sessions VALUES(?,?,?)').run(digest(token),user.id,Date.now()+30*86400000);
- if(b.client==='extension')return json(200,{token,email});
- res.setHeader('Set-Cookie',cookie(token,2592000));return json(200,{email});
+ const token=randomBytes(32).toString('hex');await query('INSERT INTO sessions(token,owner,expires,version) VALUES(?,?,?,?)').run(digest(token),user.id,Date.now()+30*86400000,user.session_version);
+ if(b.client==='extension')return json(200,{token,email:user.email});
+ res.setHeader('Set-Cookie',cookie(token,2592000));return json(200,{email:user.email});
  }
  const token=req.headers.authorization?.replace(/^Bearer /,'')||req.headers.cookie?.match(/(?:^|; )bag=([a-f0-9]+)/)?.[1]||'';
- const user=await query('SELECT users.* FROM sessions JOIN users ON users.id=sessions.owner WHERE token=? AND expires>?').get(digest(token),Date.now());
+ const user=await query('SELECT users.* FROM sessions JOIN users ON users.id=sessions.owner WHERE token=? AND expires>? AND users.verified AND NOT users.suspended AND sessions.version=users.session_version').get(digest(token),Date.now());
  if(!user)fail(401,'Sign in to your BAG.');
- if(path==='/api/me'&&m==='GET')return json(200,{email:user.email,ai_enabled:Boolean(env.AI)});
+ if(path==='/api/admin/users')return json(200,await manage(sql,user,m,m==='GET'?Object.fromEntries(url.searchParams):await body(req)));
+ if(path==='/api/me'&&m==='GET')return json(200,{email:user.email,role:role(user),ai_enabled:Boolean(env.AI)});
  if(path==='/api/logout'&&m==='POST'){await body(req);await query('DELETE FROM sessions WHERE token=?').run(digest(token));res.setHeader('Set-Cookie',cookie('',0));return json(200,{})}
  if(path==='/api/items'&&m==='GET'){
  const q=(url.searchParams.get('q')||'').slice(0,512),offset=Number(url.searchParams.get('offset')||0);

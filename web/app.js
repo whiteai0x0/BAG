@@ -3,12 +3,13 @@ const $=id=>document.getElementById(id);
 const status=message=>{$('notice').textContent=message};
 let register=false,shown=0,generation=0,timer;
 async function api(path,method='GET',data){
- const res=await fetch('/api/'+path,{signal:AbortSignal.timeout(method==='PATCH'||path==='items'&&method==='POST'?55000:15000),method,headers:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});
+ const res=await fetch('/api/'+path,{signal:AbortSignal.timeout(method==='PATCH'||path==='items'&&method==='POST'?55000:30000),method,headers:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});
  const result=await res.json();
  if(!res.ok){if(res.status===401)screen(null);throw Error(result.error)}
  return result;
 }
 function screen(email){
+ if(!email){$('usersPanel').hidden=true;$('usersPanel').open=false;$('userRows').replaceChildren()}
  generation++;$('auth').hidden=!!email;
  for(const id of ['collection','logout','search'])$(id).hidden=!email;
  $('account').textContent=email||'';$('grid').replaceChildren();$('search').value='';status('');
@@ -74,7 +75,59 @@ async function list(append=false){
 }
 function guard(fn){return async e=>{e?.preventDefault();try{await fn()}catch(err){status(err.message==='Failed to fetch'?'BAG is offline. Reconnect and try again.':err.message)}}}
 $('switchMode').onclick=()=>{register=!register;$('submitAuth').textContent=register?'Create account':'Sign in';$('switchMode').textContent=register?'Use an existing account':'Create an account';$('password').autocomplete=register?'new-password':'current-password';status(register?'Use a password with at least 12 characters.':'')};
-$('credentials').onsubmit=guard(async()=>{const user=await api(register?'register':'login','POST',{email:$('email').value,password:$('password').value});$('password').value='';screen(user.email);$('aiInfo').textContent=(await api('me')).ai_enabled?'AI classifies on save. The preview uses URL rules.':'Using URL rules. AI classification is currently unavailable.';await list()});
+let challenge='',adminRole='',userOffset=0;
+function showCode(id){
+ challenge=id;
+ $('verification').hidden=!id;
+ $('credentials').hidden=!!id;
+ $('switchMode').hidden=!!id;
+ $('code').value='';
+ if(id){$('code').focus();status('Enter the six-digit code sent to '+$('email').value+'. It expires in 10 minutes.')}
+}
+function configureAdmin(me){
+ adminRole=me.role;
+ $('usersPanel').hidden=!['owner','admin'].includes(adminRole);
+}
+async function loadUsers(){
+ const page=await api('admin/users?offset='+userOffset);
+ const rows=$('userRows');rows.replaceChildren();
+ for(const u of page.users){
+   const row=element('p',u.email+' · '+u.role+' · '+(u.suspended?'Suspended':u.verified?'Verified':'Awaiting verification'));
+   const actions=[];
+   if(u.email!==$('account').textContent && u.role!=='owner' && (adminRole==='owner'||u.role==='user')){
+     actions.push(u.suspended?'restore':'suspend');
+     if(adminRole==='owner' && u.verified && !u.suspended)actions.push(u.role==='admin'?'demote':'promote');
+   }
+   for(const action of actions){
+     const button=element('button',{suspend:'Suspend',restore:'Restore',demote:'Remove admin role',promote:'Make admin'}[action]);
+     button.onclick=guard(async()=>{
+       if(!confirm(button.textContent+' — '+u.email+'?'))return;
+       await api('admin/users','POST',{id:u.id,action});await loadUsers();
+     });row.append(' ',button);
+   }
+   rows.append(row);
+ }
+ $('nextUsers').hidden=!page.more;$('firstUsers').hidden=!userOffset;
+}
+$('usersPanel').ontoggle=guard(async()=>{if($('usersPanel').open){userOffset=0;await loadUsers()}});
+$('nextUsers').onclick=guard(async()=>{userOffset+=50;await loadUsers()});
+$('firstUsers').onclick=guard(async()=>{userOffset=0;await loadUsers()});
+async function signedIn(){
+ const me=await api('me');
+ screen(me.email);configureAdmin(me);
+ $('aiInfo').textContent=me.ai_enabled?'AI classifies on save. The preview uses URL rules.':'Using URL rules. AI classification is currently unavailable.';
+ await list();
+}
+$('credentials').onsubmit=guard(async()=>{
+ const result=await api(register?'register':'login','POST',{email:$('email').value,password:$('password').value});
+ $('password').value='';
+ if(result.challenge){showCode(result.challenge);return}
+ await signedIn();
+});
+$('verification').onsubmit=guard(async()=>{
+ await api('verify','POST',{challenge,code:$('code').value});showCode('');await signedIn();
+});
+$('retryCode').onclick=()=>{showCode('');$('password').focus();status('Re-enter your password and submit after one minute for a fresh code.')};
 $('logout').onclick=guard(async()=>{await api('logout','POST',{});screen(null)});
 function detectionLabel(method){
  return {ai:'AI',rules:'URL rules',fallback:'URL rules · AI unavailable',capture:'capture',manual:'manual'}[method]||'';
@@ -98,7 +151,7 @@ async function start(){
  const startup=$('startup');
  try{
    const user=await api('me');
-   screen(user.email);
+   screen(user.email);configureAdmin(user);
    $('aiInfo').textContent=user.ai_enabled?'AI classifies on save. The preview uses URL rules.':'Using URL rules. AI classification is currently unavailable.';
    await list();
    startup.hidden=true;

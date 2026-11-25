@@ -51,3 +51,14 @@ The dashboard shows whether AI is configured. As you paste, the preview uses loc
 
 ## Free local AI with Ollama
 Install and start Ollama on the computer running BAG. Run `ollama pull qwen2.5:3b` once. In the BAG folder, set `BAG_AI_PROVIDER=ollama` in .env. Remove any old BAG_AI_MODEL override or set it to qwen2.5:3b. Start BAG with `node --env-file=.env server.mjs`. Local classification uses Ollama on 127.0.0.1:11434 and requires no OpenAI key. Leave Ollama running while you save. If it cannot respond within 45 seconds, BAG falls back to URL rules.
+
+## Cloud signup verification and administration
+
+Before switching production traffic, run the updated schema.sql in the Neon SQL Editor. It can be rerun on the existing database. Existing accounts keep their collections and verify on their next website sign-in. Old website and extension sessions expire on upgrade. These features apply to the Cloudflare/Neon entry point. server.mjs is the older local SQLite demo.
+
+1. Sign in to script.google.com as romanlotsman22@gmail.com, create a new Apps Script project, and paste mail/Code.gs into its script editor.
+2. Generate a long random secret with a password manager (at least 32 random bytes). In Apps Script Project Settings → Script properties create MAIL_SECRET with that value.
+3. Select Deploy → New deployment → Web app. Set Execute as to Me and access to Anyone so the Worker can reach the endpoint. Authorize sending mail from the owner account and copy the deployed URL ending in /exec. The endpoint accepts only requests carrying the matching secret.
+4. Under Cloudflare Worker Settings → Variables and Secrets, create MAIL_SCRIPT_URL with the /exec URL and MAIL_SECRET with the same random value. Keep DATABASE_URL configured. Keep all secret values out of GitHub. Deploy the updated Worker.
+5. Sign up as romanlotsman22@gmail.com (or sign in if already registered) and enter the six-digit code from that mailbox. The verified owner sees Manage users in the dashboard. The owner can promote verified active users, demote admins, and suspend or restore other accounts. Admins can suspend or restore ordinary users. All role or suspension changes invalidate the affected user's existing sessions. Suspended collections are preserved.
+6. Test with a second mailbox. An incorrect code should fail, the correct code should open the collection, and reusing it should fail. Test promotion, suspension and restoration from the owner dashboard. Restored users sign in again. Google Apps Script mail quotas apply; mail delivery failures block verification.
