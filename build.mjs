@@ -1,7 +1,12 @@
 import {cp,readFile,writeFile} from 'node:fs/promises';
 import {kinds} from './web/kinds.mjs';
 await cp('web','public',{recursive:true});
-const template=await readFile('web/index.html','utf8');
+let template=await readFile('web/index.html','utf8');
+const extensionId=process.env.CHROME_WEB_STORE_ID?.trim();
+if(extensionId){
+ if(!/^[a-p]{32}$/.test(extensionId))throw new Error('CHROME_WEB_STORE_ID must be the 32-letter Chrome extension ID.');
+ template=template.replace('href="/install.html"',`href="https://chromewebstore.google.com/detail/${extensionId}"`);
+}
 await writeFile('public/index.html',template.replace('<!--BAG_KINDS-->',kinds.map(k=>`<option value="${k}">${k}</option>`).join('')));
 await writeFile('public/_headers',`/*
   Content-Security-Policy: default-src 'self'; img-src 'self' https: http:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
